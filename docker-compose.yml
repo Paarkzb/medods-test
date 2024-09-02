@@ -1,0 +1,42 @@
+services:
+  medodstest-server:
+    depends_on:
+      - medodstest-postgres
+    build:
+      context: .
+    container_name: medodstest-server
+    hostname: medodstest-server
+    networks:
+      - medodstest-net
+    ports:
+      - 8080:8080
+    env_file:
+      - .env
+    volumes:
+      - medodstest-server-volume:/app
+    deploy:
+      restart_policy:
+        condition: on-failure
+  medodstest-postgres:
+    image: postgres
+    container_name: medodstest-postgres
+    hostname: medodstest-postgres
+    networks:
+      - medodstest-net
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?database password not set}
+    ports:
+      - 5443:5432
+    volumes:
+      - medodstest-postgres-volume:/var/lib/postgresql/data
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  medodstest-postgres-volume:
+  medodstest-server-volume:
+
+networks:
+  medodstest-net:
+    driver: bridge

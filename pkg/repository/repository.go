@@ -10,8 +10,8 @@ type Authorization interface {
 	CreateUser(user model.User) (int, error)
 	GetUser(username, password string) (model.User, error)
 	GetUserById(id int) (model.UserResponse, error)
-	SetRefreshToken(userId int, refreshToken string) error
-	GetRefreshToken(userId int) (string, error)
+	SetRefreshToken(userId int, refreshToken model.RefreshToken) error
+	GetRefreshToken(userId int) (model.RefreshToken, error)
 }
 
 type Repository struct {

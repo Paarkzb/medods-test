@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"medodstest/internal/model"
 	"net/http"
+
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/sirupsen/logrus"
 )
 
 func (h *Handler) signUp(w http.ResponseWriter, r *http.Request) {
@@ -37,6 +40,8 @@ func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 		newErrorResponse(w, http.StatusBadRequest, err.Error())
 		return
 	}
+
+	logrus.Println("IP", middleware.)
 
 	accessToken, err := h.service.Authorization.GenerateAccessToken(input.Username, input.Password)
 	if err != nil {

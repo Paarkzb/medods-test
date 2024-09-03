@@ -2,6 +2,7 @@ package service
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"medodstest/internal/model"
@@ -11,12 +12,14 @@ import (
 	"math/rand"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
-	salt       = "kjasdhflkqwurh"
-	signingKey = "askdjfsa;ldfkjdsal;128"
-	tokenTTL   = 24 * time.Hour
+	salt            = "kjasdhflkqwurh"
+	signingKey      = "askdjfsa;ldfkjdsal;128"
+	accessTokenTTL  = 15 * time.Minute
+	refreshTokenTTL = 72 * time.Hour
 )
 
 type AuthService struct {
@@ -66,7 +69,7 @@ func (s *AuthService) GenerateAccessToken(username, password string) (string, er
 func (s *AuthService) ParseToken(accessToken string) (int, error) {
 	token, err := jwt.ParseWithClaims(accessToken, &tokenClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, errors.New("Неправильный метод подписи")
+			return nil, errors.New("неправильный метод подписи")
 		}
 
 		return []byte(signingKey), nil
@@ -78,36 +81,43 @@ func (s *AuthService) ParseToken(accessToken string) (int, error) {
 
 	claims, ok := token.Claims.(*tokenClaims)
 	if !ok {
-		return 0, errors.New("Тип токена не совпадает с типом tokenClaims")
+		return 0, errors.New("тип токена не совпадает с типом tokenClaims")
 	}
 
 	return claims.UserId, nil
 }
 
 func (s *AuthService) GenerateRefreshToken(userId int) (string, error) {
+
 	b := make([]byte, 32)
 
 	r := rand.New(rand.NewSource(time.Now().Unix()))
+	expTime := time.Now().Add(refreshTokenTTL)
 
 	if _, err := r.Read(b); err != nil {
 		return "", err
 	}
 
-	t := fmt.Sprintf("%x", b)
-
-	err := s.repo.SetRefreshToken(userId, t)
+	hashToken, err := bcrypt.GenerateFromPassword(b, 10)
 	if err != nil {
 		return "", err
 	}
 
-	return t, nil
+	err = s.repo.SetRefreshToken(userId, model.RefreshToken{Token: string(hashToken), ExpTime: expTime})
+	if err != nil {
+		return "", err
+	}
+
+	b64Token := base64.StdEncoding.EncodeToString(hashToken)
+
+	return b64Token, nil
 }
 
 func generateAccessTokenById(userId int) (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256,
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		&tokenClaims{
 			jwt.RegisteredClaims{
-				ExpiresAt: jwt.NewNumericDate(time.Now().Add(tokenTTL)),
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(accessTokenTTL)),
 				IssuedAt:  jwt.NewNumericDate(time.Now()),
 			},
 			userId,
@@ -123,8 +133,17 @@ func (s *AuthService) RefreshTokens(userId int, refreshToken string) (model.Toke
 		return tokens, err
 	}
 
-	if dbRefreshToken != refreshToken {
+	bRefreshToken, err := base64.StdEncoding.DecodeString(refreshToken)
+	if err != nil {
+		return tokens, err
+	}
+
+	if dbRefreshToken.Token != string(bRefreshToken) {
 		return tokens, errors.New("Рефреш токен неверный")
+	}
+
+	if time.Now().After(dbRefreshToken.ExpTime) {
+		return tokens, errors.New("Время действия рефреш токена истекло")
 	}
 
 	accessToken, err := generateAccessTokenById(userId)

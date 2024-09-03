@@ -28,7 +28,7 @@ func (h *Handler) InitRoutes() *chi.Mux {
 	mux.Route("/auth", func(mux chi.Router) {
 		mux.Post("/sign-up", h.signUp)
 		mux.Post("/sign-in", h.signIn)
-		mux.With(h.userIdentity).Post("/refresh", h.refresh)
+		mux.Post("/refresh", h.refresh)
 	})
 
 	return mux

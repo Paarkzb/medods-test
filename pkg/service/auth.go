@@ -7,11 +7,14 @@ import (
 	"fmt"
 	"medodstest/internal/model"
 	"medodstest/pkg/repository"
+	"net/smtp"
 	"time"
 
 	"math/rand"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,7 +31,7 @@ type AuthService struct {
 
 type tokenClaims struct {
 	jwt.RegisteredClaims
-	UserId int `json:"sub"`
+	UserId uuid.UUID `json:"sub"`
 }
 
 func NewAuthService(repo repository.Authorization) *AuthService {
@@ -37,7 +40,7 @@ func NewAuthService(repo repository.Authorization) *AuthService {
 	}
 }
 
-func (s *AuthService) CreateUser(user model.User) (int, error) {
+func (s *AuthService) CreateUser(user model.User) (uuid.UUID, error) {
 	user.Password = generatePasswordHash(user.Password)
 	return s.repo.CreateUser(user)
 }
@@ -49,7 +52,7 @@ func generatePasswordHash(password string) string {
 	return fmt.Sprintf("%x", hash.Sum([]byte(salt)))
 }
 
-func (s *AuthService) GetUser(userId int) (model.UserResponse, error) {
+func (s *AuthService) GetUser(userId uuid.UUID) (model.UserResponse, error) {
 	user, err := s.repo.GetUserById(userId)
 	if err != nil {
 		return user, err
@@ -66,7 +69,7 @@ func (s *AuthService) GenerateAccessToken(username, password string) (string, er
 	return generateAccessTokenById(user.Id)
 }
 
-func (s *AuthService) ParseToken(accessToken string) (int, error) {
+func (s *AuthService) ParseToken(accessToken string) (uuid.UUID, error) {
 	token, err := jwt.ParseWithClaims(accessToken, &tokenClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("неправильный метод подписи")
@@ -76,29 +79,28 @@ func (s *AuthService) ParseToken(accessToken string) (int, error) {
 	})
 
 	if err != nil {
-		return 0, nil
+		return uuid.Nil, nil
 	}
 
 	claims, ok := token.Claims.(*tokenClaims)
 	if !ok {
-		return 0, errors.New("тип токена не совпадает с типом tokenClaims")
+		return uuid.Nil, errors.New("тип токена не совпадает с типом tokenClaims")
 	}
 
 	return claims.UserId, nil
 }
 
-func (s *AuthService) GenerateRefreshToken(userId int) (string, error) {
-
-	b := make([]byte, 32)
+func (s *AuthService) GenerateRefreshToken(userId uuid.UUID, ipAddress string) (string, error) {
+	bytes := make([]byte, 32)
 
 	r := rand.New(rand.NewSource(time.Now().Unix()))
 	expTime := time.Now().Add(refreshTokenTTL)
 
-	if _, err := r.Read(b); err != nil {
+	if _, err := r.Read(bytes); err != nil {
 		return "", err
 	}
 
-	hashToken, err := bcrypt.GenerateFromPassword(b, 10)
+	hashToken, err := bcrypt.GenerateFromPassword(bytes, 10)
 	if err != nil {
 		return "", err
 	}
@@ -108,12 +110,17 @@ func (s *AuthService) GenerateRefreshToken(userId int) (string, error) {
 		return "", err
 	}
 
+	err = s.repo.SetIpAddress(userId, ipAddress)
+	if err != nil {
+		return "", err
+	}
+
 	b64Token := base64.StdEncoding.EncodeToString(hashToken)
 
 	return b64Token, nil
 }
 
-func generateAccessTokenById(userId int) (string, error) {
+func generateAccessTokenById(userId uuid.UUID) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS512,
 		&tokenClaims{
 			jwt.RegisteredClaims{
@@ -125,7 +132,7 @@ func generateAccessTokenById(userId int) (string, error) {
 	return token.SignedString([]byte(signingKey))
 }
 
-func (s *AuthService) RefreshTokens(userId int, refreshToken string) (model.Tokens, error) {
+func (s *AuthService) RefreshTokens(userId uuid.UUID, refreshToken, ipAddress string) (model.Tokens, error) {
 	var tokens model.Tokens
 
 	dbRefreshToken, err := s.repo.GetRefreshToken(userId)
@@ -139,11 +146,28 @@ func (s *AuthService) RefreshTokens(userId int, refreshToken string) (model.Toke
 	}
 
 	if dbRefreshToken.Token != string(bRefreshToken) {
-		return tokens, errors.New("Рефреш токен неверный")
+		return tokens, errors.New("рефреш токен неверный")
 	}
 
 	if time.Now().After(dbRefreshToken.ExpTime) {
-		return tokens, errors.New("Время действия рефреш токена истекло")
+		return tokens, errors.New("время действия рефреш токена истекло")
+	}
+
+	dbIpAddress, err := s.repo.GetIpAddress(userId)
+	if err != nil {
+		return tokens, err
+	}
+
+	if dbIpAddress != ipAddress {
+		user, err := s.repo.GetUserById(userId)
+		if err != nil {
+			return tokens, err
+		}
+
+		err = sendEmailWarning(user.Email)
+		if err != nil {
+			return tokens, err
+		}
 	}
 
 	accessToken, err := generateAccessTokenById(userId)
@@ -151,7 +175,7 @@ func (s *AuthService) RefreshTokens(userId int, refreshToken string) (model.Toke
 		return tokens, err
 	}
 
-	newRefreshToken, err := s.GenerateRefreshToken(userId)
+	newRefreshToken, err := s.GenerateRefreshToken(userId, ipAddress)
 	if err != nil {
 		return tokens, err
 	}
@@ -160,4 +184,30 @@ func (s *AuthService) RefreshTokens(userId int, refreshToken string) (model.Toke
 	tokens.RefreshToken = newRefreshToken
 
 	return tokens, nil
+}
+
+func sendEmailWarning(emailTo string) error {
+
+	// Моковые данные для smtp сервера
+	from := "medodstest@gmail.com"
+	password := "password"
+
+	smtpHost := "mail.example.com"
+	smtpPort := "25"
+
+	to := []string{emailTo}
+
+	message := []byte("Предупреждение: IP адрес изменен.")
+
+	auth := smtp.PlainAuth("", from, password, smtpHost)
+
+	// Sending email.
+	err := smtp.SendMail(smtpHost+":"+smtpPort, auth, from, to, message)
+	if err != nil {
+		return err
+	}
+
+	logrus.Infof("Предупреждение об изменении IP адреса отправлена на %s", emailTo)
+
+	return nil
 }

@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"medodstest/internal/model"
 	"net/http"
+	"strings"
 
-	"github.com/go-chi/chi/v5/middleware"
-	"github.com/sirupsen/logrus"
+	"github.com/google/uuid"
 )
 
 func (h *Handler) signUp(w http.ResponseWriter, r *http.Request) {
@@ -41,8 +41,6 @@ func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logrus.Println("IP", middleware.)
-
 	accessToken, err := h.service.Authorization.GenerateAccessToken(input.Username, input.Password)
 	if err != nil {
 		newErrorResponse(w, http.StatusInternalServerError, err.Error())
@@ -55,7 +53,7 @@ func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refreshToken, err := h.service.GenerateRefreshToken(userId)
+	refreshToken, err := h.service.GenerateRefreshToken(userId, strings.Split(r.RemoteAddr, ":")[0])
 	if err != nil {
 		newErrorResponse(w, http.StatusInternalServerError, err.Error())
 		return
@@ -67,7 +65,8 @@ func (h *Handler) signIn(w http.ResponseWriter, r *http.Request) {
 }
 
 type refreshInput struct {
-	RefreshToken string `json:"refresh_token"`
+	UserId       uuid.UUID `json:"user_id"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
@@ -77,13 +76,8 @@ func (h *Handler) refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userId, err := getUserId(r)
-	if err != nil {
-		newErrorResponse(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	tokens, err := h.service.Authorization.RefreshTokens(userId, input.RefreshToken)
+	// tokens, err := h.service.Authorization.RefreshTokens(input.UserId, input.RefreshToken, strings.Split(r.RemoteAddr, ":")[0])
+	tokens, err := h.service.Authorization.RefreshTokens(input.UserId, input.RefreshToken, "192.168.155.1")
 	if err != nil {
 		newErrorResponse(w, http.StatusInternalServerError, err.Error())
 		return

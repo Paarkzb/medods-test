@@ -4,6 +4,7 @@ import (
 	"context"
 	"medodstest/internal/model"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,13 +16,13 @@ func NewAuthPostgres(db *pgxpool.Pool) *AuthPostgres {
 	return &AuthPostgres{db: db}
 }
 
-func (r *AuthPostgres) CreateUser(user model.User) (int, error) {
-	var id int
+func (r *AuthPostgres) CreateUser(user model.User) (uuid.UUID, error) {
+	var id uuid.UUID
 	query := "INSERT INTO public.user (name, email, username, password) VALUES ($1, $2, $3, $4) RETURNING id;"
 
 	err := r.db.QueryRow(context.Background(), query, user.Name, user.Email, user.Username, user.Password).Scan(&id)
 	if err != nil {
-		return 0, err
+		return uuid.Nil, err
 	}
 
 	return id, nil
@@ -41,7 +42,7 @@ func (r *AuthPostgres) GetUser(username, password string) (model.User, error) {
 	return user, err
 }
 
-func (r *AuthPostgres) GetUserById(id int) (model.UserResponse, error) {
+func (r *AuthPostgres) GetUserById(id uuid.UUID) (model.UserResponse, error) {
 	var user model.UserResponse
 
 	query := `
@@ -55,7 +56,7 @@ func (r *AuthPostgres) GetUserById(id int) (model.UserResponse, error) {
 	return user, err
 }
 
-func (r *AuthPostgres) SetRefreshToken(userId int, refreshToken model.RefreshToken) error {
+func (r *AuthPostgres) SetRefreshToken(userId uuid.UUID, refreshToken model.RefreshToken) error {
 	tx, err := r.db.Begin(context.Background())
 	if err != nil {
 		return err
@@ -74,7 +75,7 @@ func (r *AuthPostgres) SetRefreshToken(userId int, refreshToken model.RefreshTok
 	return tx.Commit(context.Background())
 }
 
-func (r *AuthPostgres) GetRefreshToken(userId int) (model.RefreshToken, error) {
+func (r *AuthPostgres) GetRefreshToken(userId uuid.UUID) (model.RefreshToken, error) {
 	var refreshToken model.RefreshToken
 
 	query := `
@@ -86,4 +87,37 @@ func (r *AuthPostgres) GetRefreshToken(userId int) (model.RefreshToken, error) {
 	err := r.db.QueryRow(context.Background(), query, userId).Scan(&refreshToken.Token, &refreshToken.ExpTime)
 
 	return refreshToken, err
+}
+
+func (r *AuthPostgres) SetIpAddress(userId uuid.UUID, ipAddress string) error {
+	tx, err := r.db.Begin(context.Background())
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(context.Background())
+
+	query := `
+		UPDATE public.user SET ip_address=$1 WHERE id=$2
+	`
+
+	_, err = tx.Exec(context.Background(), query, ipAddress, userId)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(context.Background())
+}
+
+func (r *AuthPostgres) GetIpAddress(userId uuid.UUID) (string, error) {
+	var ipAddress string
+
+	query := `
+				SELECT u.ip_address
+				FROM public.user as u 
+				WHERE u.id = $1
+	`
+
+	err := r.db.QueryRow(context.Background(), query, userId).Scan(&ipAddress)
+
+	return ipAddress, err
 }

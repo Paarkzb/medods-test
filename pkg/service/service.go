@@ -3,15 +3,17 @@ package service
 import (
 	"medodstest/internal/model"
 	"medodstest/pkg/repository"
+
+	"github.com/google/uuid"
 )
 
 type Authorization interface {
-	CreateUser(user model.User) (int, error)
-	GetUser(userId int) (model.UserResponse, error)
+	CreateUser(user model.User) (uuid.UUID, error)
+	GetUser(userId uuid.UUID) (model.UserResponse, error)
 	GenerateAccessToken(username, password string) (string, error)
-	GenerateRefreshToken(userId int) (string, error)
-	ParseToken(accessToken string) (int, error)
-	RefreshTokens(userId int, refreshToken string) (model.Tokens, error)
+	GenerateRefreshToken(userId uuid.UUID, ipAddress string) (string, error)
+	ParseToken(accessToken string) (uuid.UUID, error)
+	RefreshTokens(userId uuid.UUID, refreshToken, ipAddress string) (model.Tokens, error)
 }
 
 type Service struct {
